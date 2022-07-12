@@ -10,6 +10,7 @@
 #include "param.h"
 #include "stat.h"
 #include "spinlock.h"
+#include "sysinfo.h"
 #include "proc.h"
 #include "fs.h"
 #include "sleeplock.h"
@@ -113,6 +114,26 @@ sys_fstat(void)
   if(argfd(0, 0, &f) < 0 || argaddr(1, &st) < 0)
     return -1;
   return filestat(f, st);
+}
+
+uint64
+sys_sysinfo(void)
+{
+  uint64 upsi; // user pointer to struct sysinfo
+  struct sysinfo si;
+  struct proc *p = myproc();
+
+  if(argaddr(0, &upsi) < 0)
+    return -1;
+  
+  si.freemem = getfreemem();
+  si.nproc = getnproc();
+
+  if(copyout(p->pagetable, upsi, (char *)&si, sizeof(struct sysinfo)) < 0) {
+    return -1;
+  }
+
+  return 0;
 }
 
 // Create the path new as a link to the same inode as old.
