@@ -77,10 +77,33 @@ sys_sleep(void)
 
 
 #ifdef LAB_PGTBL
+#define NPAGE_LIMITS 32
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 va, buf;
+  int npage;
+  uint32 bitmasks = 0;
+
+  if(argaddr(0, &va) < 0)
+    return -1;
+  if(argint(1, &npage) < 0 || npage > 64)
+    return -1;
+  if(argaddr(2, &buf) < 0)
+    return -1;
+  
+  
+  for(int i = 0; i < npage; ++i){
+    pte_t * ptr = walk(myproc()->pagetable, va + i * PGSIZE, 0);
+    if((*ptr) & PTE_A) {
+      bitmasks |= (1 << i);
+      // clear access bit
+      *ptr &= (~PTE_A);
+    }
+  }
+
+  // write bitmask to buf
+  copyout(myproc()->pagetable, buf, (char *)&bitmasks, 4);
   return 0;
 }
 #endif

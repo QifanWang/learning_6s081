@@ -281,6 +281,34 @@ freewalk(pagetable_t pagetable)
   kfree((void*)pagetable);
 }
 
+static void
+printTAB(pagetable_t tab, int pre)
+{
+  for(int i = 0; i < 512; ++i){
+    pte_t pte = tab[i];
+    uint64 pa = PTE2PA(pte);
+    
+    if((pte & PTE_V) == 0)
+      continue;
+
+    for(int j = 0; j < pre; ++j)
+        printf(" ..");
+    printf("%d: pte %p pa %p\n", i, pte, pa);
+    if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      printTAB((pagetable_t)pa, pre+1);
+    }
+  }
+}
+
+// Print a page table
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  printTAB(pagetable, 1);
+}
+
 // Free user memory pages,
 // then free page-table pages.
 void
