@@ -77,8 +77,26 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2) {
+    p->elapsed += 1;
+    if (p->interval != 0 && p->elapsed >= p->interval && p->intrptTfr == 0) {
+      // save trapframe
+      p->intrptTfr = (struct trapframe *)kalloc();
+      memmove(p->intrptTfr, p->trapframe, PGSIZE);
+
+      // set hanler as return addres
+      p->trapframe->epc = p->handler;
+      
+      p->elapsed = 0;
+      // uint64 fnaddr = walkaddr(p->pagetable, (uint64)p->handler);
+      // printf("walkaddr gets fnaddr %p from handler %p\n", fnaddr, p->handler);  
+      // ((void(*)())fnaddr)();
+      // p->handler();
+    }
+    else {
+      yield();
+    }
+  }
 
   usertrapret();
 }

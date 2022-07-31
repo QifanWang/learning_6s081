@@ -1,0 +1,10 @@
+a0-a8
+a2 holds 13 in main's call to printf.
+No call to function f in the assembly code of main.
+No call to function g in the assembly code of main, either. Compiler inline the two functions.
+0000000000000630 <printf>:
+0x0000000000000038
+Output: He110 World
+If the RISC-V were instead big-endian, in order to yield the same output, i need be set to 0x726c6400
+no need to change 57616
+Maybe output: x=3 y=0. The register a2 may holds zero, so 'y=0'

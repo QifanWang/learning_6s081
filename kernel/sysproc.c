@@ -57,7 +57,7 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
-
+  backtrace();
   if(argint(0, &n) < 0)
     return -1;
   acquire(&tickslock);
@@ -71,6 +71,35 @@ sys_sleep(void)
   }
   release(&tickslock);
   return 0;
+}
+
+uint64
+sys_sigalarm(void)
+{
+  struct proc *p = mycpu()->proc;
+  int interval;
+  uint64 fnaddr;
+  
+  if(argint(0, &interval) < 0 || interval < 0)
+    return -1;
+  if(argaddr(1, &fnaddr) < 0)
+    return -1;
+  
+  p->interval = interval;
+  p->handler = fnaddr;
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = mycpu()->proc;
+
+  memmove(p->trapframe, p->intrptTfr, PGSIZE);
+  kfree(p->intrptTfr);
+  p->intrptTfr = 0;
+
+  return 0;  
 }
 
 uint64

@@ -97,6 +97,10 @@ struct proc {
   struct proc *parent;         // Parent process
 
   // these are private to the process, so p->lock need not be held.
+  int interval;                // Interval of sig_alarm
+  uint64 handler;           // Handler address of sig_alarm
+  int elapsed;                 // Elapsed time since last call to alarm handler
+  struct trapframe *intrptTfr; // Trapframe when interrupted
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
