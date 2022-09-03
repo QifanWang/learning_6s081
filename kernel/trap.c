@@ -37,6 +37,7 @@ void
 usertrap(void)
 {
   int which_dev = 0;
+  int which_cause = 0;
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
@@ -50,7 +51,7 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  if(( which_cause = r_scause()) == 8){
     // system call
 
     if(p->killed)
@@ -65,6 +66,25 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(which_cause == 15) {
+    // Store/AMO page fault
+
+    if(p->killed)
+      exit(-1);
+
+    //get faulting virtual address
+    uint64 fault_va = r_stval();
+    if (fault_va >= MAXVA)
+      exit(-1);
+    pte_t *pte = walk(p->pagetable, fault_va, 0);
+  
+    if (0 == ((*pte) & PTE_COW)) {
+      printf("Non-COW page cause fault 15: virtual addr=%p physical addr=%p\n", fault_va, PTE2PA(*pte));
+      exit(-1);
+    }
+
+    if (0 == handleCOWpage(p->pagetable, pte, fault_va)) 
+      p->killed = 1;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
