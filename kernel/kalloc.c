@@ -18,15 +18,25 @@ struct run {
   struct run *next;
 };
 
+static struct run* steal_page(int cpu_id);
+static void add2tail(struct run* head, struct run* content);
+
 struct {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+  char lockName[8];
+} kmem[NCPU];
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+  int i;
+  
+  for(i = 0; i < NCPU; ++i) {
+    snprintf(kmem[i].lockName, 8, "kmem_%d", i);
+    initlock(&kmem[i].lock, kmem[i].lockName);
+  }
+
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -47,6 +57,7 @@ void
 kfree(void *pa)
 {
   struct run *r;
+  int cpu_id;
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
@@ -56,10 +67,15 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  // get current cpu id
+  push_off();
+  cpu_id = cpuid();
+
+  acquire(&kmem[cpu_id].lock);
+  r->next = kmem[cpu_id].freelist;
+  kmem[cpu_id].freelist = r;
+  release(&kmem[cpu_id].lock);
+  pop_off();
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -69,14 +85,80 @@ void *
 kalloc(void)
 {
   struct run *r;
+  int cpu_id;
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
+  // get current cpu id
+  push_off();
+  cpu_id = cpuid();
+  
+  acquire(&kmem[cpu_id].lock);
+  r = kmem[cpu_id].freelist;
   if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+    kmem[cpu_id].freelist = r->next;
+  release(&kmem[cpu_id].lock);
+
+  // steal page for empty free-list
+  if (r == 0) {
+
+    r = steal_page(cpu_id);
+    
+    if(r) {
+      acquire(&kmem[cpu_id].lock);
+      if (kmem[cpu_id].freelist == 0)
+        kmem[cpu_id].freelist = r->next;
+      else {
+        // special case: current freelist become not empty
+        add2tail(kmem[cpu_id].freelist, r);
+        r = kmem[cpu_id].freelist;
+        kmem[cpu_id].freelist = r->next;
+      }
+      release(&kmem[cpu_id].lock); 
+    }
+  }
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
+
+  pop_off();
   return (void*)r;
+}
+
+static struct run*
+steal_page(int cpu_id) {
+  struct run *slow, *fast, *ret;
+  int i;
+
+  for (i = 0; i < NCPU; ++i) {
+    if (cpu_id == i)
+      continue;
+    
+    acquire(&kmem[i].lock);
+    if (kmem[i].freelist) {
+      slow = fast = kmem[i].freelist;
+
+      while (fast->next && fast->next->next) {
+        slow = slow->next;
+        fast = fast->next->next;
+      }
+
+      
+      ret = kmem[i].freelist;
+      kmem[i].freelist = slow->next;
+      slow->next = 0;
+      release(&kmem[i].lock);
+      return ret;
+      
+    }
+    release(&kmem[i].lock);
+  }
+
+  return 0;
+}
+
+
+static void 
+add2tail(struct run* head, struct run* content) {
+  while (head->next)
+    head = head->next;
+  head->next = content;
 }
