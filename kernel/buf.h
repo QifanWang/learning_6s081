@@ -8,7 +8,7 @@ struct buf {
   struct buf *prev; // LRU cache list
   struct buf *next;
 
-  uint64 lasttick; // last 
+  uint64 lasttick; // last access
   uchar data[BSIZE];
 };
 

@@ -39,7 +39,7 @@ struct {
 } bcache;
 
 static char bucket_names[NBUCKET][16];
-int i = sizeof(bcache.buc_head);
+
 static void removeFrom(struct buf* b);
 static void insertTo(struct buf* b, int bucketID);
 
