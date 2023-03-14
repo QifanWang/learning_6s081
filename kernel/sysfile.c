@@ -16,6 +16,8 @@
 #include "file.h"
 #include "fcntl.h"
 
+#define DEPTHLINK 10
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -49,6 +51,51 @@ fdalloc(struct file *f)
       return fd;
     }
   }
+  return -1;
+}
+
+// holding lock of ip at ip_addr, 
+// searching the non-symlink inode 
+static int 
+follow_symlink(struct inode** ip_addr)
+{
+  struct inode* ip;
+  uint cycle[DEPTHLINK];
+  char linkPath[MAXPATH];
+  int i, j;
+
+  ip = *ip_addr;
+  for(i = 0; i < DEPTHLINK; ++i ) {
+
+    cycle[i] = ip->inum;
+    // check cycle by inum
+    for (j = 0; j < i; ++j) 
+      if (cycle[j] == cycle[i])
+        return -1;
+    
+    // set zeros to char array to avoid overlap
+    memset(linkPath, 0, MAXPATH);
+    if(0 == readi(ip, 0, (uint64)linkPath, 0, MAXPATH)) {
+      printf("follow_symlink: fail to read inode %u\n", ip->inum);
+      iunlockput(ip);
+      return -1;
+    }
+    iunlockput(ip);
+
+    if(0 == (ip = namei(linkPath))) {
+      printf("follow_symlink: fail to call namei %s\n", linkPath);
+      return -1;
+    }
+    
+    ilock(ip);
+    if(ip->type != T_SYMLINK) {
+      *ip_addr = ip;
+      return 0; 
+    }
+  }
+
+  // up to DEPTHLINK
+  iunlockput(ip);
   return -1;
 }
 
@@ -322,6 +369,13 @@ sys_open(void)
     return -1;
   }
 
+  if(ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0) {
+    if(follow_symlink(&ip) != 0) {
+      printf("follow_symlink encounters cycle or illegal inode or depth threshold\n");
+      end_op();
+      return -1;
+    }
+  }
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -482,5 +536,34 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64 
+sys_symlink(void) 
+{
+  char target[MAXPATH], path[MAXPATH];
+  struct inode *ip;
+  int targetlen;
+  
+  if( (targetlen = argstr(0, target, MAXPATH)) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+
+  // Create synmlink inode, and holding ip lock
+  if (0 == (ip = create(path, T_SYMLINK, 0, 0))) {
+    end_op();
+    return -1;
+  }
+
+  if( writei(ip, 0, (uint64)target, 0, targetlen) != targetlen ) {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  
+  iunlockput(ip);
+  end_op();
   return 0;
 }
