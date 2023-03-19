@@ -484,3 +484,130 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 
+sys_mmap(void)
+{
+  // void *mmap(void *addr, uint64 length, int prot, int flags, int fd, uint64 offset);
+  // void *addr; // unused 0th arg
+  uint64 length;
+  int prot, flags, fd;
+  // uint64 offset; // asumed zero, unused 5th arg
+  struct file *f;
+
+  struct proc *p = myproc();
+  struct VMA* pvma;
+
+  if (argaddr(1, &length) < 0 ||
+      argint(2, &prot) < 0 ||
+      argint(3, &flags) < 0 ||
+      argfd(4, &fd, &f) < 0) {
+        
+        return -1;
+  }
+
+  // if file is not writable and shared, cannot map it as writable
+  // if file is private is ok.
+  if(!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED)) {
+    return -1;
+  }
+
+  for(pvma = p->mapped; pvma != (p->mapped + MAXVMA); ++pvma) {
+    if (0 == pvma->used) {
+
+      pvma->addr = p->sz; 
+      length = PGROUNDUP(length);
+      p->sz += length;
+      pvma->len = length;
+
+
+      pvma->prot = prot;
+      pvma->flags = flags;
+      
+      pvma->f = f;
+      filedup(pvma->f); // incr ref count of f
+
+      pvma->offset = 0;
+      pvma->ori_len = length;
+      pvma->used = 1;
+      return (uint64)(pvma->addr);
+    }
+  }
+
+
+
+  return ((uint64)-1);
+}
+
+uint64 sys_munmap(void) 
+{
+  // int munmap(void *addr, uint64 length);
+  uint64 addr;
+  uint64 length;
+  int is_whole;
+  struct proc* p;
+  uint w_off;
+
+  if (argaddr(0, &addr) < 0 || argaddr(1, &length) < 0)
+    return -1;
+  
+  
+  p = myproc();
+  
+  for(struct VMA* cur = p->mapped; cur != (p->mapped + MAXVMA); ++cur ) {
+    if(cur->used && cur->addr <= addr && addr < (cur->addr + cur->len)) {
+
+      // unmap at [start, end) or the whole region
+      if(addr != cur->addr)
+        panic("munmap: addr is not the start of mapped region");
+
+      length = PGROUNDUP(length);
+      w_off = cur->offset;
+      if (length >= cur->len) {
+        // whole region
+        is_whole = 1;
+        length = cur->len;
+        cur->used = 0;
+      } else {
+        is_whole = 0;
+        cur->addr += length;
+        cur->offset += length;
+      }
+      cur->len -= length;
+
+      
+
+      // like uvmunmap, remove the mapped physical page from pg_table
+      // and write back
+      for (uint64 va = addr; va != addr + length; va += PGSIZE) {
+        pte_t *pte = walk(p->pagetable, va, 0);
+        if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+          // like walkaddr only be used to look up user pages
+          continue;
+        }
+
+        if(cur->flags & MAP_SHARED) {
+          begin_op();
+          ilock(cur->f->ip);
+          if(writei(cur->f->ip, 1, va, w_off + va - addr, PGSIZE) != PGSIZE) {
+            panic("munmap: fail to write back");
+          }
+          iunlock(cur->f->ip);
+          end_op();
+        }
+
+        kfree((void*)PTE2PA(*pte));
+        *pte = 0;
+      }
+      
+
+      if(is_whole)
+        fileclose(cur->f);
+
+      return 0;
+    }
+  }
+
+  return -1;
+}
+

@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -37,7 +40,7 @@ void
 usertrap(void)
 {
   int which_dev = 0;
-
+  uint64 which_cause = 0;
   if((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
@@ -50,7 +53,8 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  which_cause = r_scause();
+  if(which_cause == 8){
     // system call
 
     if(p->killed)
@@ -67,7 +71,65 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(which_cause == 0x0d || which_cause == 0x0f ){
+    // page fault, exception code 13 and 15
+
+    // fault virtual addr
+    uint64 va = r_stval();
+    if(va < p->trapframe->sp || va >= p->sz ) {
+      printf("usertrap(): page fault address upder sp or beyond size of process memory\n");
+      goto fail;
+    }
+
+    
+    int found = 0;
+    for(struct VMA* vma = p->mapped; vma != (p->mapped + MAXVMA); vma++) {
+      // find the vma
+      if (vma->used && vma->addr <= va && va < (vma->addr + vma->len)) {
+        // allocate page
+        void* newPage;
+        // read offset
+        uint r_off;
+
+        if(0 == (newPage = kalloc())) {
+          printf("usertrap(): fail to allocate new page\n");
+          goto fail;
+        }
+
+        va = PGROUNDDOWN(va); // va -> va of the fault page 
+
+        // map page to user address space
+        // PTE flag low 4 bits are XWRV, need to leftshift
+        if( mappages(p->pagetable, va, PGSIZE, (uint64)newPage, ((vma->prot) << 1 | PTE_U) ) < 0) {
+          printf("usertrap(): fail to map page\n");
+          goto fail;
+        }
+
+        
+        // fill page with 0
+        memset(newPage, 0, PGSIZE);
+
+        // va - vma->addr is relevant distance and vma->offset is absolute offset in file
+        r_off = va - vma->addr + vma->offset; 
+        // read 4096 bytes of the relevant file into that page
+        begin_op();
+        ilock(vma->f->ip);
+        readi(vma->f->ip, 1, va, r_off, PGSIZE);
+        iunlock(vma->f->ip);
+        end_op();
+        found = 1;
+        break;
+      }
+
+    }
+    
+    if (!found) {
+      printf("usertrap(): page not found in VMA\n");
+      goto fail;
+    }
+
   } else {
+fail:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

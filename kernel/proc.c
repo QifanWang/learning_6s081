@@ -289,6 +289,17 @@ fork(void)
   }
   np->sz = p->sz;
 
+  // Copy VMA
+  for(int i=0;i<MAXVMA ; i++) {
+    struct VMA *v = &p->mapped[i];
+    struct VMA *nv = &np->mapped[i];
+    // like call mmap
+    if(v->used) {
+      memmove(nv,v,sizeof(struct VMA)); 
+	    filedup(nv->f);
+    }
+  }
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -351,6 +362,25 @@ exit(int status)
       fileclose(f);
       p->ofile[fd] = 0;
     }
+  }
+
+  // like munmap the whole VMA region, like call munmap
+  // change p->sz, physical pages in page table are free in wait 
+  for(struct VMA* v = p->mapped; v != (p->mapped + MAXVMA); ++v) {
+    if(v->used) {
+      for (uint64 va = v->addr; va != v->addr + v->len; va += PGSIZE) {
+        pte_t *pte = walk(p->pagetable, va, 0);
+        if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+          // like walkaddr only be used to look up user pages
+          continue;
+        }
+        kfree((void*)PTE2PA(*pte));
+        *pte = 0;
+      }
+      fileclose(v->f);
+      p->sz -= v->ori_len;
+    }
+    memset(v, 0, sizeof(struct VMA));
   }
 
   begin_op();

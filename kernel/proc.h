@@ -82,6 +82,21 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+#define MAXVMA 16
+
+struct VMA {
+  uint64 addr;        // address
+  uint64 len;         // length
+  int prot;           // permissions 
+  int flags;          // flags
+  struct file *f;     // file being mapped
+  uint64 offset;      // offset of mapped file. Cannot share with f->off
+                      // Otherwise, what if a process mmap/munmap a file f, and mmap the file again? 
+                      // The file offset may be set in previous mmap/munmap call.
+  uint64 ori_len;     // length of the mmapp call, used for free proc memory
+  int used;           // if this vma is used
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -100,6 +115,7 @@ struct proc {
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
+  struct VMA mapped[MAXVMA];   // User virtual memory area
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
